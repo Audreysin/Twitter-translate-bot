@@ -1,9 +1,11 @@
 console.log("The bot is starting");
 var Twit = require('twit');
-var config = require('./config')
+const fs = require('fs');
+var config = require('./config');
 var T = new Twit(config);
 const {Translate} = require('@google-cloud/translate').v2;
 require('dotenv').config();
+'use strict';
 
 // Google translate service account credentials
 const CREDENTIALS = JSON.parse(process.env.CREDENTIALS);
@@ -14,6 +16,7 @@ const translate = new Translate({
     projectId: CREDENTIALS.project_id
 });
 
+// Dictionary of languages supported by Google translate and their corresponding language code
 const supportedLang = {
     "Afrikaans": "af",
     "Albanian": "sq",
@@ -125,75 +128,81 @@ const supportedLang = {
     "Zulu": "zu",
 }
 
-lastIdTranslated = null
-
-// Searches for all posts with @AXYTranslateBot every min and translates the post to French
-executeTask()
-// setInterval(executeTask, 1000*60)
-
+// executeTask queries for 
 function executeTask() {
+    let jsonData = require('./translated_tweets.json');
+    var translated_tweets = jsonData['translated'];
+    console.log(translated_tweets);
     var query = null
 
-    if (lastIdTranslated) {
-        query = '@AXYTranslateBot since_id:' + lastIdTranslated;
-    } else {
-        var date = new Date();
-        date.setDate(date.getDate() - 1);
-        query = '@AXYTranslateBot since:'+ date.toISOString().split('T')[0];
-    }
+    var searchDate = new Date();
+    // searchDate.setDate(searchDate.getDate() - 1);
+    query = '@AXYTranslateBot since:'+ searchDate.toISOString().split('T')[0];
+    console.log(query);
     
-    function makeTranslation(err, data, response){
+    async function makeTranslation(err, data, response){
         var tweets = data.statuses;
-        for (var i=0; i < tweets.length; i++){
-            var msg = tweets[i].text;
-            var id = tweets[i].id_str;
-            // var lang = getTargetLang(msg.slice(0));
-            var lang = 'French';
-            tweetTranslation(msg, id, supportedLang[lang]);
+        for (const tweet of tweets){
+            var msg = tweet.text;
+            var id = tweet.id_str;
+            msg = msg.replace(/@AXYTranslateBot/g, "");
+            if (translated_tweets.includes(id)) {
+                console.log(id + " " + msg + " is already translated");
+                continue;
+            }
+            await getTargetLang(msg).then((lang) => {
+                console.log(id + " " + msg + " gets translated");
+                tweetTranslation(msg, id, supportedLang[lang]);
+            });
+            translated_tweets.push(id);
         }
-    }
-
-    function tweetTranslation(msg, id, lang) {
-
-        function postTweet(err, data, response) {
+        let jsonStr = JSON.stringify({"translated":translated_tweets}, null, 2);
+        await fs.writeFile('translated_tweets.json', jsonStr, (err) => {
             if (err) {
-                console.log("Error code: " + err.code)
-                console.log(err.message)
-            } else {
-                console.log(data);
-            }
-        }
-
-        const translateText = async (text, targetLanguage) => {
-            try {
-                let [response] = await translate.translate(text, targetLanguage);
-                return response;
-            } catch (error) {
-                console.log(`Error at translateText --> ${error}`);
-                return 0;
-            }
-        };
-        
-        translateText(msg, lang)
-            .then((res) => {
-                var tweet = {
-                    status: res,
-                    in_reply_to_status_id: id
-                }
-                T.post('statuses/update', tweet, postTweet) 
-            })
-            .catch((err) => {
                 console.log(err);
-            });   
+            }
+        });
+    }
+    T.get('search/tweets', {q: query}, makeTranslation);
+}
+
+function tweetTranslation(msg, id, lang) {
+
+    function postTweet(err, data, response) {
+        if (err) {
+            console.log("Error code: " + err.code)
+            console.log(err.message)
+        } else {
+            console.log("Translated " + data.text);
+        }
     }
 
-    T.get('search/tweets', {q: query}, makeTranslation);
+    const translateText = async (text, targetLanguage) => {
+        try {
+            let [response] = await translate.translate(text, targetLanguage);
+            return response;
+        } catch (error) {
+            console.log(`Error at translateText --> ${error}`);
+            return 0;
+        }
+    };
     
+    translateText(msg, lang)
+        .then((res) => {
+            var tweet = {
+                status: res,
+                in_reply_to_status_id: id
+            }
+            T.post('statuses/update', tweet, postTweet) 
+        })
+        .catch((err) => {
+            console.log(err);
+        });   
 }
 
 // Expects target language to be a substring '(->language)' where the language can be in two words
-function getTargetLang(msg) {
-    var substring = msg;
+async function getTargetLang(msg) {
+    var substring = msg.slice(0);
     var targetLanguage = null;
     while (substring.length > 0) {
         var openBrac = substring.indexOf('(');
@@ -204,40 +213,32 @@ function getTargetLang(msg) {
         if (closeBrac === -1) {
             break;
         }
-        var content = substring.slice(openBrac, closeBrac+1);
-        if ((content.slice(0,2) == "->") && (content.slice(2) in supportedLang)){
-            targetLanguage = content.slice(2);
+        var content = substring.slice(openBrac+1, closeBrac);
+        console.log(content);
+        if (content in supportedLang){
+            targetLanguage = content;
             break;
         } else {
             substring = substring.slice(openBrac+1);
         }
     }
     if (targetLanguage == null) {
-        const detectLanguage = async (text) => {
-            try {
-                let response = await translate.detect(text);
-                return response[0].language;
-            } catch (error) {
-                console.log(`Error at detectLanguage --> ${error}`);
-                return 0;
+        try {
+            let response = await translate.detect(msg);
+            if (response[0].language === 'en') {
+                return 'French';
+            } else {
+                return 'English';
             }
+        } catch (error) {
+            console.log('Error at detectLanguage --> ${error}');
+            return 'English';
         }
-        
-        detectLanguage(msg)
-            .then((res) => {
-                console.log(res);
-                console.log(msg);
-                if (res === 'en') {
-                    return 'French';
-                } else {
-                    return 'English';
-                }
-            })
-            .catch((err) => {
-                console.log(error);
-                return 'English'
-            });
     } else {
         return targetLanguage
     }
 }
+
+// Searches for all posts with @AXYTranslateBot every min and translates the tweet
+executeTask();
+setInterval(executeTask, 1000*60);
