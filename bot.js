@@ -1,13 +1,13 @@
 console.log("The bot is starting");
 var Twit = require('twit');
 const fs = require('fs');
-var config = require('./config');
+var config = require('./config'); // Importing Twitter credentials from file
 var T = new Twit(config);
 const {Translate} = require('@google-cloud/translate').v2;
 require('dotenv').config();
 'use strict';
 
-// Google translate service account credentials
+// Importing Google translate service account credentials from file
 const CREDENTIALS = JSON.parse(process.env.CREDENTIALS);
 
 // Configuration for the client
@@ -128,17 +128,20 @@ const supportedLang = {
     "Zulu": "zu",
 }
 
-// executeTask queries for 
+// Searches for all tweets with mention @AXYTranslateBot created on the present date
+// Fetches the list of tweets already translated from translated_tweets.json
+// If the id of the tweet in the search is not in the json, it tweets a reply
+// with the translation to the tweet.
+// The tweet is translated to the language included within brackets in the original tweet
+// If no language is included, it translates to French if the tweet is in English, or to English otherwise.
+
 function executeTask() {
     let jsonData = require('./translated_tweets.json');
     var translated_tweets = jsonData['translated'];
-    console.log(translated_tweets);
-    var query = null
+    var query = null;
 
     var searchDate = new Date();
-    // searchDate.setDate(searchDate.getDate() - 1);
     query = '@AXYTranslateBot since:'+ searchDate.toISOString().split('T')[0];
-    console.log(query);
     
     async function makeTranslation(err, data, response){
         var tweets = data.statuses;
@@ -167,6 +170,7 @@ function executeTask() {
     T.get('search/tweets', {q: query}, makeTranslation);
 }
 
+// Tweets a reply to the tweet with id_str id, where the text of the reply is msg translated to lang
 function tweetTranslation(msg, id, lang) {
 
     function postTweet(err, data, response) {
@@ -201,7 +205,11 @@ function tweetTranslation(msg, id, lang) {
         });   
 }
 
-// Expects target language to be a substring '(->language)' where the language can be in two words
+// Expects target language to be a substring '(language)' where the language 
+//  can be is in the list of languages supported by the Google api
+// Returns the target language
+// If no target language is included in the tweet, returns French if the tweet is in English.
+// Otherwise, returns English
 async function getTargetLang(msg) {
     var substring = msg.slice(0);
     var targetLanguage = null;
@@ -240,6 +248,6 @@ async function getTargetLang(msg) {
     }
 }
 
-// Searches for all posts with @AXYTranslateBot every min and translates the tweet
+// Searches for all posts with @AXYTranslateBot every minute and translates the tweet
 executeTask();
 setInterval(executeTask, 1000*60);
