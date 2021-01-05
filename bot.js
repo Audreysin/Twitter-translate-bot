@@ -152,6 +152,7 @@ function executeTask() {
             }
             await getTargetLang(msg).then((lang) => {
                 console.log(id + " " + msg + " gets translated");
+                msg = msg.replace("(" + lang + ")", "");
                 tweetTranslation(msg, id, supportedLang[lang]);
             });
             translated_tweets.push(id);
